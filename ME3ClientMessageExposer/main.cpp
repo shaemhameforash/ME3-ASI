@@ -3,6 +3,12 @@
 #include "resource.h"
 #include <Richedit.h>
 #include <string.h>
+#include <fstream>
+#include <ctime>
+#include <sys/stat.h>
+#include <direct.h>
+
+std::ofstream logFile;
 
 struct LogWindowStruct {
 	HWND hWindow;
@@ -26,11 +32,45 @@ struct MsgStruct
 
 void LogAppendText(LPCWSTR text)
 {
+	// Get current date and time
+	time_t now = time(0);
+	struct tm timeinfo;
+	localtime_s(&timeinfo, &now);
+	char buffer[80];
+	strftime(buffer, sizeof(buffer), "[%Y-%m-%d %H:%M:%S] ", &timeinfo);
+
+	// Convert wide character string to narrow string
+	int bufferSize = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+	if (bufferSize == 0)
+	{
+		// Handle error
+		return;
+	}
+
+	std::string narrowText(bufferSize, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, text, -1, &narrowText[0], bufferSize, nullptr, nullptr);
+	narrowText.pop_back(); // Remove null terminator
+
+	//Concatenate Date Time with Narrow Text.
+	narrowText = buffer + narrowText;
+
+	//Convert the Date Time Narrow Text to Wide String.
+	std::wstring wideString(narrowText.begin(), narrowText.end());
+
+	//Convert it back again to LPCWSTR.
+	LPCWSTR wideStringConverted = wideString.c_str();
+
 	int currentlen = GetWindowTextLength(logWindow.hRichEdit);
 	SendMessage(logWindow.hRichEdit, EM_SETSEL, (WPARAM)currentlen, (LPARAM)currentlen);
-	SendMessage(logWindow.hRichEdit, EM_REPLACESEL, 0, (LPARAM)text);
+	SendMessage(logWindow.hRichEdit, EM_REPLACESEL, 0, (LPARAM)wideStringConverted);
 	SendMessage(logWindow.hRichEdit, EM_REPLACESEL, 0, (LPARAM)L"\n");
 	SendMessage(logWindow.hRichEdit, WM_VSCROLL, SB_BOTTOM, 0);
+
+	// Write the text to the file
+	if (logFile.is_open())
+	{
+		logFile << narrowText << std::endl;
+	}
 }
 
 bool GetLocation(int * p)
@@ -92,8 +132,47 @@ BOOL CALLBACK LogWindowProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lPara
 	return TRUE;
 }
 
+static bool DirectoryExists(const std::string& directoryName)
+{
+	struct stat info;
+	if (stat(directoryName.c_str(), &info) != 0)
+		return false;
+	else if (info.st_mode & S_IFDIR) // S_ISDIR() doesn't exist on my windows
+		return true;
+	else
+		return false;
+}
+
 DWORD WINAPI LogWindowThread(LPVOID lpParam)
 {
+	// Check if the client_logs folder exists
+	if (!DirectoryExists("client_logs"))
+	{
+		// Attempt to create the client_logs folder
+		if (_mkdir("client_logs") != 0)
+		{
+			// Handle error creating directory
+			MessageBox(NULL, L"Error creating client_logs directory!", NULL, MB_OK | MB_ICONERROR);
+			return 1;
+		}
+	}
+	// Get current date
+	time_t now = time(0);
+	struct tm timeinfo;
+	localtime_s(&timeinfo, &now);
+	char buffer[80];
+	strftime(buffer, sizeof(buffer), "client_log-%d-%m-%Y.txt", &timeinfo);
+	std::string logFileName(buffer);
+
+	// Open the log file in append mode
+	logFile.open("client_logs\\"+ logFileName, std::ios::app);
+	if (!logFile.is_open())
+	{
+		// Handle error opening file
+		MessageBox(NULL, L"Error opening log file!", NULL, MB_OK | MB_ICONERROR);
+		return 1;
+	}
+
 	LoadLibrary(L"riched20.dll");
 	MSG msg;
 	logWindow.hWindow = CreateDialog(hDLL, MAKEINTRESOURCE(IDD_DIALOG1), 0, LogWindowProc);
@@ -135,6 +214,15 @@ DWORD WINAPI Start(LPVOID lpParam)
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
+	if (fdwReason == DLL_PROCESS_DETACH)
+	{
+		// Close the log file
+		if (logFile.is_open())
+		{
+			logFile.close();
+		}
+	}
+	
 	hDLL = hinstDLL;
 	if (fdwReason == DLL_PROCESS_ATTACH)
 	{
@@ -144,3 +232,5 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	}
 	return 1;
 }
+
+

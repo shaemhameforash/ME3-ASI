@@ -7,6 +7,9 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <direct.h>
+#include <Windows.h> // Added
+#include <VersionHelpers.h> // Added
+#include <ShellScalingAPI.h> /
 
 std::ofstream logFile;
 
@@ -47,6 +50,9 @@ void LogAppendText(LPCWSTR text)
 		return;
 	}
 
+	//There is CERTAINLY a better way to perform the following operations more efficiently.
+	//However this works, and I have close to nill experience with C++.
+	//The following was mostly generated with the help of AI.
 	std::string narrowText(bufferSize, '\0');
 	WideCharToMultiByte(CP_UTF8, 0, text, -1, &narrowText[0], bufferSize, nullptr, nullptr);
 	narrowText.pop_back(); // Remove null terminator
@@ -109,27 +115,51 @@ __declspec(naked) void ExposeMessageFunc()
 	}
 }
 
-BOOL CALLBACK LogWindowProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
+// Function to handle window resizing
+void ResizeRichEditControl(HWND hwnd)
 {
-	switch (Message)
+	// Retrieve the handle to the rich edit control
+	HWND hRichEdit = GetDlgItem(hwnd, IDC_RICHEDIT21);
+
+	// Get the client area rectangle of the dialog box
+	RECT rcClient;
+	GetClientRect(hwnd, &rcClient);
+
+	// Resize the rich edit control to fit the client area
+	SetWindowPos(hRichEdit, NULL, 0, 0, rcClient.right, rcClient.bottom, SWP_NOZORDER);
+}
+
+
+BOOL CALLBACK LogWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message)
 	{
 	case WM_INITDIALOG:
+		// Initialize the dialog
 		return TRUE;
-	//case WM_COMMAND:
-	//	switch (LOWORD(wParam))
-	//	{
-	//	case IDOK:
-	//		EndDialog(hwnd, IDOK);
-	//		break;
-	//	case IDCANCEL:
-	//		EndDialog(hwnd, IDCANCEL);
-	//		break;
-	//	}
-	//	break;
-	default:
-		return FALSE;
+
+	case WM_MOVING:
+		return TRUE;
+
+	case WM_SIZE:
+		// Handle window resizing
+		ResizeRichEditControl(hwnd);
+		return TRUE;
+
+	case WM_COMMAND:
+		// Handle commands
+		switch (LOWORD(wParam))
+		{
+		case IDOK:
+		case IDCANCEL:
+			// Close the dialog
+			EndDialog(hwnd, LOWORD(wParam));
+			return TRUE;
+		}
+		break;
 	}
-	return TRUE;
+
+	return FALSE;
 }
 
 static bool DirectoryExists(const std::string& directoryName)
@@ -176,6 +206,7 @@ DWORD WINAPI LogWindowThread(LPVOID lpParam)
 	LoadLibrary(L"riched20.dll");
 	MSG msg;
 	logWindow.hWindow = CreateDialog(hDLL, MAKEINTRESOURCE(IDD_DIALOG1), 0, LogWindowProc);
+	SetWindowLongPtr(logWindow.hWindow, GWL_STYLE, GetWindowLongPtr(logWindow.hWindow, GWL_STYLE) | WS_THICKFRAME | WS_CAPTION | WS_MAXIMIZEBOX | WS_MINIMIZEBOX);
 	logWindow.hRichEdit = GetDlgItem(logWindow.hWindow, IDC_RICHEDIT21);
 	CHARFORMAT cf;
 	cf.cbSize = sizeof(CHARFORMAT);
